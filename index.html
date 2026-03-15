@@ -671,8 +671,16 @@ Réponds en français. Sois direct, concis et offensif comme un entraîneur de c
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:prompt}]})
     });
+    if (!res.ok) {
+      throw new Error(`Anthropic API indisponible (${res.status})`);
+    }
+
     const data = await res.json();
     let text = data.content?.[0]?.text || '';
+    if (!text.trim()) {
+      throw new Error('Réponse IA vide.');
+    }
+
     text = text.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
     out.innerHTML = `<div class="aitext">${text}</div>`;
   } catch(e) {
@@ -683,7 +691,7 @@ ${username} affiche un style ${d.globalWr>=55?'offensif et confiant':d.globalWr>
 <strong>Plan avec les Blancs</strong><br>
 Face à sa défense principale (${d.bs[0]?.name?.split(':')[0]||'à identifier'}), surprends-le avec une ligne inhabituelle dès le coup 4-6. L'objectif est de le forcer à réfléchir par lui-même avant la fin de l'ouverture.<br><br>
 <strong>Plan avec les Noirs</strong><br>
-${w?`Il performe à seulement ${w.wr}% dans ${w.name.split(':')[0]} — force cette position en contrôlant l'ordre des coups dès le départ.`:'Joue solide et cherche les positions déséquilibrées qu'il n'a pas l'habitude de gérer.'}<br><br>
+${w?`Il performe à seulement ${w.wr}% dans ${w.name.split(':')[0]} — force cette position en contrôlant l'ordre des coups dès le départ.`:"Joue solide et cherche les positions déséquilibrées qu'il n'a pas l'habitude de gérer."}<br><br>
 <strong>Facteur psychologique</strong><br>
 Joue tes 8 premiers coups avec assurance et rapidité. Ça montre une préparation solide et crée une pression mentale immédiate. Un adversaire qui doute dès l'ouverture commet des erreurs au milieu de partie.<br><br>
 <strong>Conseil décisif</strong><br>
