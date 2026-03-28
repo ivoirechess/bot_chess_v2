@@ -153,7 +153,7 @@ footer{text-align:center;padding:2rem;font-family:'Space Mono',monospace;font-si
     </button>
   </div>
   <div class="proxy-note" id="proxyNote">
-    ⚡ Chess.com bloque les appels navigateur directs (CORS). Ce tool utilise automatiquement <span>allorigins.win</span> comme proxy transparent — aucune configuration nécessaire.
+    ⚡ Chess.com bloque les appels navigateur directs (CORS). Ce tool utilise automatiquement <span>allorigins.win</span> puis <span>codetabs</span> en secours — aucune configuration nécessaire.
   </div>
   <div style="margin-top:1.2rem">
     <span class="sb-label">PARAMÈTRES D'ANALYSE</span>
@@ -250,7 +250,7 @@ footer{text-align:center;padding:2rem;font-family:'Space Mono',monospace;font-si
 </div>
 </main>
 
-<footer>ChessPrep CI · Lichess API (directe) · Chess.com (proxy allorigins.win) · Analyse IA par Anthropic Claude<br>"La victoire appartient à celui qui est le mieux préparé." — Sun Tzu</footer>
+<footer>ChessPrep CI · Lichess API (directe) · Chess.com (proxy allorigins.win + codetabs fallback) · Analyse IA par Anthropic Claude<br>"La victoire appartient à celui qui est le mieux préparé." — Sun Tzu</footer>
 
 <script>
 let platform = 'lichess';
@@ -278,8 +278,35 @@ function showTab(name, btn) {
   document.getElementById('tc-'+name).classList.add('on');
 }
 
-// CORS proxy for Chess.com
-function proxy(url) { return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`; }
+// CORS proxy for Chess.com (fallback chain to reduce "Failed to fetch")
+const CHESSCOM_PROXIES = [
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
+];
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function fetchChessComViaProxy(url, options = {}) {
+  let lastErr = null;
+  for (const buildProxyUrl of CHESSCOM_PROXIES) {
+    try {
+      const res = await fetchWithTimeout(buildProxyUrl(url), options);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('Aucun proxy disponible.');
+}
 
 // ── LICHESS ──────────────────────────────────────────────────────────────────
 async function fetchLichess(username, tc) {
@@ -305,7 +332,7 @@ async function fetchChessCom(username, tc) {
   const user = username.toLowerCase();
 
   setStatus('Profil Chess.com via proxy CORS…', '1/4');
-  const pr = await fetch(proxy(`https://api.chess.com/pub/player/${user}`));
+  const pr = await fetchChessComViaProxy(`https://api.chess.com/pub/player/${user}`);
   if (!pr.ok) throw new Error(`Joueur "${username}" introuvable sur Chess.com.`);
   const profile = await pr.json();
   if (profile.code === 0 || !profile.username) throw new Error(`Joueur "${username}" introuvable sur Chess.com.`);
@@ -313,12 +340,12 @@ async function fetchChessCom(username, tc) {
   // Stats (rating)
   let stats = {};
   try {
-    const sr = await fetch(proxy(`https://api.chess.com/pub/player/${user}/stats`));
+    const sr = await fetchChessComViaProxy(`https://api.chess.com/pub/player/${user}/stats`);
     stats = await sr.json();
   } catch(e) {}
 
   setStatus('Récupération des archives…', '2/4');
-  const ar = await fetch(proxy(`https://api.chess.com/pub/player/${user}/games/archives`));
+  const ar = await fetchChessComViaProxy(`https://api.chess.com/pub/player/${user}/games/archives`);
   if (!ar.ok) throw new Error('Impossible de récupérer les archives Chess.com.');
   const archData = await ar.json();
   const archives = (archData.archives || []).slice(-6).reverse();
@@ -328,7 +355,7 @@ async function fetchChessCom(username, tc) {
   for (const url of archives) {
     if (allGames.length >= 300) break;
     try {
-      const r = await fetch(proxy(url));
+      const r = await fetchChessComViaProxy(url);
       const d = await r.json();
       allGames = allGames.concat(d.games || []);
     } catch(e) { continue; }
@@ -484,7 +511,12 @@ async function startAnalysis() {
     document.getElementById('results').classList.add('on');
     generateAI(analyzed, username);
   } catch(e) {
-    hideStatus(); showErr(e.message||'Erreur inattendue.');
+    hideStatus();
+    const msg = (e && e.message) ? String(e.message) : '';
+    const fallbackMsg = platform === 'chesscom'
+      ? 'Échec réseau/proxy (FAILED TO FETCH). Réessaie dans 30s ou bascule sur Lichess.'
+      : 'Échec réseau (FAILED TO FETCH). Vérifie ta connexion puis réessaie.';
+    showErr(msg.toLowerCase().includes('failed to fetch') ? fallbackMsg : (msg || fallbackMsg));
   } finally {
     document.getElementById('goBtn').disabled = false;
   }
