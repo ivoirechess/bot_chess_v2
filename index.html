@@ -289,25 +289,34 @@ async function fetchJsonResilient(url, opts = {}) {
   providers.push('allorigins', 'corsproxy');
 
   let lastError = null;
+  const providerNames = { direct: 'direct', allorigins: 'allorigins', corsproxy: 'corsproxy' };
   for (const provider of providers) {
     const endpoint = provider === 'direct' ? url : proxy(url, provider);
     try {
       const res = await fetch(endpoint);
       if (!res.ok) {
-        lastError = new Error(`HTTP ${res.status}`);
+        lastError = new Error(`Passerelle ${providerNames[provider]}: HTTP ${res.status}`);
         continue;
       }
       const text = await res.text();
       if (!text.trim()) {
-        lastError = new Error('Réponse vide.');
+        lastError = new Error(`Passerelle ${providerNames[provider]}: réponse vide.`);
         continue;
       }
-      return JSON.parse(text);
+      try {
+        return JSON.parse(text);
+      } catch (_) {
+        const cleaned = text.trim().slice(0, 120).replace(/\s+/g, ' ');
+        const hasGatewayError = /error code\s*:\s*\d+/i.test(cleaned) || /<html/i.test(cleaned);
+        lastError = hasGatewayError
+          ? new Error(`Passerelle ${providerNames[provider]} indisponible (réponse non JSON).`)
+          : new Error(`Passerelle ${providerNames[provider]}: format de réponse invalide.`);
+      }
     } catch (err) {
       lastError = err;
     }
   }
-  throw new Error(lastError?.message || 'Impossible de contacter l’API.');
+  throw new Error(lastError?.message || 'Impossible de contacter l’API (réseau ou proxy indisponible).');
 }
 
 // ── LICHESS ──────────────────────────────────────────────────────────────────
