@@ -278,8 +278,37 @@ function showTab(name, btn) {
   document.getElementById('tc-'+name).classList.add('on');
 }
 
-// CORS proxy for Chess.com
-function proxy(url) { return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`; }
+// CORS proxy helpers for Chess.com
+function proxy(url, provider='allorigins') {
+  if (provider === 'corsproxy') return `https://corsproxy.io/?${encodeURIComponent(url)}`;
+  return `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+}
+
+async function fetchJsonResilient(url, opts = {}) {
+  const providers = opts.allowDirect === false ? [] : ['direct'];
+  providers.push('allorigins', 'corsproxy');
+
+  let lastError = null;
+  for (const provider of providers) {
+    const endpoint = provider === 'direct' ? url : proxy(url, provider);
+    try {
+      const res = await fetch(endpoint);
+      if (!res.ok) {
+        lastError = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+      const text = await res.text();
+      if (!text.trim()) {
+        lastError = new Error('Réponse vide.');
+        continue;
+      }
+      return JSON.parse(text);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw new Error(lastError?.message || 'Impossible de contacter l’API.');
+}
 
 // ── LICHESS ──────────────────────────────────────────────────────────────────
 async function fetchLichess(username, tc) {
@@ -304,23 +333,20 @@ async function fetchLichess(username, tc) {
 async function fetchChessCom(username, tc) {
   const user = username.toLowerCase();
 
-  setStatus('Profil Chess.com via proxy CORS…', '1/4');
-  const pr = await fetch(proxy(`https://api.chess.com/pub/player/${user}`));
-  if (!pr.ok) throw new Error(`Joueur "${username}" introuvable sur Chess.com.`);
-  const profile = await pr.json();
-  if (profile.code === 0 || !profile.username) throw new Error(`Joueur "${username}" introuvable sur Chess.com.`);
+  setStatus('Profil Chess.com via passerelle réseau…', '1/4');
+  const profile = await fetchJsonResilient(`https://api.chess.com/pub/player/${user}`, { allowDirect:false });
+  if (!profile?.username || profile?.code === 0 || profile?.code === 404) {
+    throw new Error(`Joueur "${username}" introuvable sur Chess.com.`);
+  }
 
   // Stats (rating)
   let stats = {};
   try {
-    const sr = await fetch(proxy(`https://api.chess.com/pub/player/${user}/stats`));
-    stats = await sr.json();
+    stats = await fetchJsonResilient(`https://api.chess.com/pub/player/${user}/stats`, { allowDirect:false });
   } catch(e) {}
 
   setStatus('Récupération des archives…', '2/4');
-  const ar = await fetch(proxy(`https://api.chess.com/pub/player/${user}/games/archives`));
-  if (!ar.ok) throw new Error('Impossible de récupérer les archives Chess.com.');
-  const archData = await ar.json();
+  const archData = await fetchJsonResilient(`https://api.chess.com/pub/player/${user}/games/archives`, { allowDirect:false });
   const archives = (archData.archives || []).slice(-6).reverse();
 
   setStatus('Téléchargement des parties Chess.com…', '3/4');
@@ -328,8 +354,7 @@ async function fetchChessCom(username, tc) {
   for (const url of archives) {
     if (allGames.length >= 300) break;
     try {
-      const r = await fetch(proxy(url));
-      const d = await r.json();
+      const d = await fetchJsonResilient(url, { allowDirect:false });
       allGames = allGames.concat(d.games || []);
     } catch(e) { continue; }
   }
